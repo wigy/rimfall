@@ -74,6 +74,8 @@ export class Renderer {
   private w = 0;
   private h = 0;
   private scale = 1;
+  private cx = 0;
+  private fittedWeb: Game['web'] | null = null;
   private cy = 0;
   private camZ = -NEAR;
   private particles: Particle[] = [];
@@ -96,15 +98,44 @@ export class Renderer {
     this.canvas.width = Math.round(this.w * dpr);
     this.canvas.height = Math.round(this.h * dpr);
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    this.scale = Math.min(this.w, this.h) * 0.38;
-    this.cy = this.h / 2 - 0.12 * this.scale;
+    this.fittedWeb = null;
+  }
+
+  /** HUD text size, shared by layout and HUD drawing. */
+  private hudSize(): number {
+    return Math.max(14, Math.min(this.w, this.h) * 0.035);
+  }
+
+  /**
+   * Scale and center the web's near rim (its largest on-screen outline at rest)
+   * into the band between the top HUD rows and the bottom overdrive meter.
+   */
+  private fitWeb(web: Game['web']): void {
+    if (this.fittedWeb === web) return;
+    this.fittedWeb = web;
+    const s = this.hudSize();
+    const top = s * 3.6;
+    const bottom = this.h - s * 2.8;
+    const xs = web.points.map((p) => p.x);
+    const ys = web.points.map((p) => p.y - CAM_Y);
+    const [xMin, xMax] = [Math.min(...xs), Math.max(...xs)];
+    const [yMin, yMax] = [Math.min(...ys), Math.max(...ys)];
+    // Margin leaves room for the player ship, which pokes out past the rim.
+    const margin = 1.12;
+    this.scale = Math.min(
+      (this.w * 0.9) / ((xMax - xMin) * margin),
+      (bottom - top) / ((yMax - yMin) * margin),
+      Math.min(this.w, this.h) * 0.45,
+    );
+    this.cx = this.w / 2 - ((xMin + xMax) / 2) * this.scale;
+    this.cy = (top + bottom) / 2 - ((yMin + yMax) / 2) * this.scale;
   }
 
   private project(p: Vec2, depth: number): Vec2 | null {
     const z = depth * DEPTH - this.camZ;
     if (z < NEAR_CLIP) return null;
     const k = (this.scale * NEAR) / z;
-    return { x: this.w / 2 + p.x * k, y: this.cy + (p.y - CAM_Y) * k };
+    return { x: this.cx + p.x * k, y: this.cy + (p.y - CAM_Y) * k };
   }
 
   private updateCamera(g: Game): number {
@@ -171,6 +202,7 @@ export class Renderer {
     ctx.lineJoin = 'round';
     ctx.lineCap = 'round';
 
+    this.fitWeb(g.web);
     const playerDepth = this.updateCamera(g);
     const warping = g.mode === 'warping';
     this.drawStars(warping ? 9 + g.modeTime * 14 : 0.6, paused ? 0 : dt);
@@ -221,9 +253,9 @@ export class Renderer {
         this.stars[i] = this.newStar();
         continue;
       }
-      const x = this.w / 2 + (s.x / s.z) * k;
+      const x = this.cx + (s.x / s.z) * k;
       const y = this.cy + (s.y / s.z) * k;
-      const px = this.w / 2 + (s.x / prevZ) * k;
+      const px = this.cx + (s.x / prevZ) * k;
       const py = this.cy + (s.y / prevZ) * k;
       const a = Math.min(1, 2.5 / s.z);
       ctx.strokeStyle = `rgba(160,190,255,${a})`;
@@ -364,7 +396,7 @@ export class Renderer {
   private drawHud(g: Game, paused: boolean): void {
     const { ctx, w, h } = this;
     ctx.globalCompositeOperation = 'source-over';
-    const s = Math.max(14, Math.min(w, h) * 0.035);
+    const s = this.hudSize();
     const pad = s;
 
     if (g.mode === 'title') {

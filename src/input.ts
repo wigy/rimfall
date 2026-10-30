@@ -85,10 +85,14 @@ export class Input {
     this.mouseDX = 0;
     const start = this.consume('Enter') || this.consume('Space') || this.clicked;
     this.clicked = false;
+    // Presses are checked as edges too, so a tap released between steps isn't lost.
+    const tapped = (codes: string[]) => codes.map((c) => this.consume(c)).some(Boolean);
+    const fireKeys = ['Space', 'KeyZ'];
+    const overdriveKeys = ['KeyX', 'ShiftLeft', 'ShiftRight'];
     return {
       move,
-      fire: this.keys.has('Space') || this.keys.has('KeyZ') || this.mouseFire || this.touchFire,
-      overdrive: this.keys.has('KeyX') || this.keys.has('ShiftLeft') || this.keys.has('ShiftRight') || this.mouseOverdrive,
+      fire: fireKeys.some((k) => this.keys.has(k)) || tapped(['KeyZ']) || start || this.mouseFire || this.touchFire,
+      overdrive: overdriveKeys.some((k) => this.keys.has(k)) || tapped(overdriveKeys) || this.mouseOverdrive,
       start,
     };
   }
