@@ -1,6 +1,6 @@
 # RIMFALL
 
-An original vector tube shooter for the browser. Hold the rim of a glowing 3D web and blast everything climbing up from the far end.
+An original neon vector tube shooter for the browser. Hold the rim of a glowing 3D web and blast everything climbing up from the far end.
 
 **▶ Play: https://wigy.github.io/rimfall/**
 
