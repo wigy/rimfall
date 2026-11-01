@@ -21,19 +21,22 @@ const WEB_PALETTES: [string, string][] = [
 ];
 const PLAYER_COLOR = '#ffe14d';
 const OVERDRIVE_COLOR = '#6ff7ff';
-const ENEMY_COLORS: Record<EnemyKind | 'bolt', string> = {
+const ENEMY_COLORS: Record<EnemyKind | 'bolt' | 'thorn', string> = {
   drifter: '#ff3d5f',
   weaver: '#ff52e8',
   splitter: '#9b74ff',
   seeder: '#3dffa0',
   mine: '#ffb23d',
   bolt: '#e8f4ff',
+  thorn: '#a8ff2e',
 };
+/** Depth between barbs on a thorn; fixed so barbs stay put as the tip burns back. */
+const THORN_BARB = 0.035;
 const FONT = '"Segoe UI", "Helvetica Neue", system-ui, sans-serif';
 
 type Local = [number, number];
 
-const SHAPES: Record<EnemyKind | 'bolt' | 'player', Local[][]> = {
+const SHAPES: Record<EnemyKind | 'bolt' | 'thorn' | 'player', Local[][]> = {
   drifter: [
     [[-0.75, 0], [0, 0.75], [0.75, 0], [0, -0.75]],
     [[-0.3, 0], [0, 0.3], [0.3, 0], [0, -0.3]],
@@ -49,6 +52,7 @@ const SHAPES: Record<EnemyKind | 'bolt' | 'player', Local[][]> = {
   ],
   mine: [[[0, -0.55], [0.14, -0.14], [0.55, 0], [0.14, 0.14], [0, 0.55], [-0.14, 0.14], [-0.55, 0], [-0.14, -0.14]]],
   bolt: [[[0, -0.28], [0.2, 0], [0, 0.28], [-0.2, 0]]],
+  thorn: [[[0, 0.42], [0.2, -0.1], [0, 0.02], [-0.2, -0.1]]],
   player: [[[-1, 0], [-0.55, 0.6], [-0.3, 0.25], [0.3, 0.25], [0.55, 0.6], [1, 0], [0, -0.25]]],
 };
 
@@ -81,7 +85,6 @@ interface Frame {
 }
 
 const easeOut = (t: number) => 1 - (1 - t) ** 3;
-const easeIn = (t: number) => t * t * t;
 const clamp01 = (t: number) => Math.min(1, Math.max(0, t));
 
 function rgba(hex: string, a: number): string {
@@ -181,11 +184,6 @@ export class Renderer {
 
   private updateCamera(g: Game): number {
     // Returns the depth at which to draw the player.
-    if (g.mode === 'warping') {
-      const travel = easeIn(Math.min(g.modeTime / WARP_TIME, 1)) * (DEPTH + 0.8);
-      this.camZ = -NEAR + travel;
-      return travel / DEPTH;
-    }
     if (g.mode === 'playing' && g.levelTime < LEVEL_INTRO) {
       this.camZ = -NEAR - (1 - easeOut(g.levelTime / LEVEL_INTRO)) * 10;
       return 0;
@@ -194,8 +192,9 @@ export class Renderer {
       this.camZ = -NEAR - 2.4 - Math.sin(this.time * 0.6) * 0.3;
       return 0;
     }
-    this.camZ = -NEAR;
-    return 0;
+    // The camera rides with the player, which also holds it in place after a crash in the dive.
+    this.camZ = -NEAR + g.player.depth * DEPTH;
+    return g.player.depth;
   }
 
   /** Spawn particles for game events. Call before the game drains its event list. */
@@ -217,7 +216,7 @@ export class Renderer {
         const p = this.project(rimPoint(g.web, ev.u), ev.depth);
         if (p) this.sparks(p, '#ffffff', 8, 140);
       } else if (ev.type === 'playerDeath') {
-        const p = this.project(rimPoint(g.web, ev.lane + 0.5), 0);
+        const p = this.project(rimPoint(g.web, ev.lane + 0.5), ev.depth);
         if (p) {
           this.sparks(p, PLAYER_COLOR, 90, 480);
           this.sparks(p, '#ffffff', 40, 300);
@@ -290,6 +289,9 @@ export class Renderer {
     this.drawWeb(g, webColor, webAccent, showPlayer ? playerLane(g) : -1);
 
     if (g.mode !== 'title') {
+      g.thorns.forEach((tip, lane) => {
+        if (tip < 1) this.drawThorn(g, lane, tip);
+      });
       for (const s of g.shots) this.drawShot(g, s.lane + 0.5, s.depth, s.pierce);
       for (const b of g.bolts) this.drawThing(g, b.lane + 0.5, b.depth, SHAPES.bolt, ENEMY_COLORS.bolt, 1, this.time * 8, 0.35);
       for (const e of g.enemies) {
@@ -396,11 +398,19 @@ export class Renderer {
     }
   }
 
+  /**
+   * Where lanes start being drawn. During the warp dive they are cut off a little ahead of the
+   * ship rather than at the camera, so they stay on screen and readable while steering.
+   */
+  private nearDepth(g: Game): number {
+    return Math.max(0, g.player.depth - NEAR / 2 / DEPTH);
+  }
+
   private drawWeb(g: Game, color: string, accent: string, activeLane: number): void {
     const { ctx } = this;
     const { web } = g;
     const len = web.points.length;
-    const near = web.points.map((p) => this.project(p, 0));
+    const near = web.points.map((p) => this.project(p, this.nearDepth(g)));
     const far = web.points.map((p) => this.project(p, 1));
 
     // Translucent lane faces, alternating slightly for a paneled look.
@@ -507,6 +517,25 @@ export class Renderer {
       this.stroke(rgba(color, f), idx === 0 ? 2 : 1.4);
       if (idx === 0) this.stroke(rgba('#ffffff', 0.35 * f), 0.7);
     });
+  }
+
+  /** A barbed line from the tip down to the far end, cut off near the camera during the warp dive. */
+  private drawThorn(g: Game, lane: number, tip: number): void {
+    const start = Math.max(tip, this.nearDepth(g));
+    if (start >= 1) return;
+    const at = (depth: number, off: number) => this.project(rimPoint(g.web, lane + 0.5 + off), depth);
+    const pts = [at(start, 0)];
+    for (let k = Math.floor(start / THORN_BARB) + 1; k * THORN_BARB < 1; k++) {
+      pts.push(at(k * THORN_BARB, k % 2 ? 0.13 : -0.13));
+    }
+    pts.push(at(1, 0));
+    const line = pts.filter((p): p is Vec2 => p !== null);
+    if (line.length < 2) return;
+
+    const color = ENEMY_COLORS.thorn;
+    this.path(line, false);
+    this.stroke(rgba(color, 0.85), 2);
+    this.drawThing(g, lane + 0.5, tip, SHAPES.thorn, color, 1, 0, 0.5);
   }
 
   private drawShot(g: Game, u: number, depth: number, pierce: boolean): void {

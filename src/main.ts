@@ -22,7 +22,7 @@ let savedHi = game.hiScore;
 
 window.addEventListener('resize', () => renderer.resize());
 window.addEventListener('blur', () => {
-  if (game.mode === 'playing') paused = true;
+  if (game.mode === 'playing' || game.mode === 'warping') paused = true;
 });
 canvas.addEventListener('click', () => {
   if (game.mode === 'playing') input.requestPointerLock();

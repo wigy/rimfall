@@ -20,15 +20,16 @@ An original neon vector tube shooter for the browser. Hold the rim of a glowing 
 | Overdrive | X / Shift | right button | two-finger tap |
 | Pause / mute | P / M | | |
 
-Clear every enemy to finish the sector and dive down the tube to the next web. There are 12 web shapes, some closed and some open.
+Clear every enemy to finish the sector and dive down the tube to the next web. You can still steer and fire during the dive, so dodge any thorns or shoot them out of the way. There are 12 web shapes, some closed and some open.
 
 **Enemies**
 
 - **Drifter** (red diamond): climbs its lane, then chases you along the rim.
 - **Weaver** (magenta bowtie): swings across lanes and fires shots at you. Shoot the shots, too.
 - **Splitter** (violet hexagon): breaks into two drifters when hit.
-- **Seeder** (green box, takes 2 hits): drops slowly rising mines, then retreats.
+- **Seeder** (green box, takes 2 hits): drops slowly rising mines, then retreats. Leaves a thorn behind it as it climbs.
 - **Mine** (orange star): explodes when it reaches the rim, killing you if you're in its lane.
+- **Thorn** (lime barbed line): stays in its lane and blocks your shots. Each hit burns it back, and an overdrive shot burns through it. It can't touch you on the rim, but it's fatal if you hit it during the dive.
 
 Kills fill the **Overdrive** meter. When it's full, trigger it for 5 seconds of rapid fire that pierces through everything. You get an extra life every 20,000 points.
 

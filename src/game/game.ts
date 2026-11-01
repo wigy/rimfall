@@ -26,16 +26,23 @@ export const MAX_OVERDRIVE_SHOTS = 16;
 export const CONTACT_RANGE = 0.25;
 export const SEEDER_DROP_DEPTH = 0.45;
 export const SEEDER_MAX_DROPS = 3;
+/** Thorns laid by seeders never grow closer to the rim than this. */
+export const THORN_MIN_TIP = 0.15;
+/** How much of a thorn one shot burns away. */
+export const THORN_CHIP = 0.06;
+/** How far down the tube the warp dive carries the player; past depth 1 the tube has ended. */
+export const WARP_TRAVEL = 1.25;
 
 const CLIMB_SPEED: Record<EnemyKind, number> = { drifter: 0.16, weaver: 0.12, splitter: 0.1, seeder: 0.14, mine: MINE_SPEED };
 const HP: Record<EnemyKind, number> = { drifter: 1, weaver: 1, splitter: 1, seeder: 2, mine: 1 };
-export const POINTS: Record<EnemyKind | 'bolt', number> = {
+export const POINTS: Record<EnemyKind | 'bolt' | 'thorn', number> = {
   drifter: 150,
   weaver: 200,
   splitter: 100,
   seeder: 300,
   mine: 50,
   bolt: 10,
+  thorn: 10,
 };
 
 export function createGame(seed = Date.now(), hiScore = 0): Game {
@@ -51,10 +58,11 @@ export function createGame(seed = Date.now(), hiScore = 0): Game {
     nextLifeAt: EXTRA_LIFE_EVERY,
     web,
     speed: 1,
-    player: { pos: bottomLane(web) + 0.5, fireCooldown: 0 },
+    player: { pos: bottomLane(web) + 0.5, depth: 0, fireCooldown: 0 },
     shots: [],
     bolts: [],
     enemies: [],
+    thorns: [],
     spawnQueue: [],
     overdrive: 0,
     overdriveTime: 0,
@@ -79,9 +87,11 @@ export function setupLevel(g: Game, level: number): void {
   g.speed = speedForLevel(level);
   g.spawnQueue = waveForLevel(level, g.web.lanes, g.rng);
   g.enemies = [];
+  g.thorns = new Array<number>(g.web.lanes).fill(1);
   g.shots = [];
   g.bolts = [];
   g.player.pos = bottomLane(g.web) + 0.5;
+  g.player.depth = 0;
   g.player.fireCooldown = 0;
   g.levelTime = 0;
   setMode(g, 'playing');
@@ -95,6 +105,11 @@ function setMode(g: Game, mode: Game['mode']): void {
 
 export function playerLane(g: Game): number {
   return laneOf(g.web, g.player.pos);
+}
+
+/** Player depth along the tube at a given time into the warp dive. */
+export function warpDepth(modeTime: number): number {
+  return Math.min(modeTime / WARP_TIME, 1) ** 3 * WARP_TRAVEL;
 }
 
 export function spawnEnemy(g: Game, kind: EnemyKind, u: number, depth = 1): Enemy {
@@ -141,12 +156,13 @@ export function update(g: Game, input: FrameInput, dt: number): void {
       break;
     case 'warping':
       if (g.modeTime > WARP_TIME) setupLevel(g, g.level + 1);
+      else updateWarping(g, input, dt);
       break;
   }
 }
 
-function updatePlaying(g: Game, input: FrameInput, dt: number): void {
-  g.levelTime += dt;
+/** Steering and firing, shared by normal play and the warp dive. */
+function updatePlayer(g: Game, input: FrameInput, dt: number): void {
   const { web, player } = g;
 
   player.pos = wrapU(web, player.pos + input.move);
@@ -162,11 +178,26 @@ function updatePlaying(g: Game, input: FrameInput, dt: number): void {
 
   player.fireCooldown -= dt;
   const maxShots = overdriven ? MAX_OVERDRIVE_SHOTS : MAX_SHOTS;
-  if (input.fire && player.fireCooldown <= 0 && g.shots.length < maxShots) {
-    g.shots.push({ lane, depth: 0, pierce: overdriven, hits: [] });
+  if (input.fire && player.fireCooldown <= 0 && g.shots.length < maxShots && player.depth < 1) {
+    g.shots.push({ lane, depth: player.depth, pierce: overdriven, hits: [] });
     player.fireCooldown = overdriven ? OVERDRIVE_COOLDOWN : FIRE_COOLDOWN;
     g.events.push({ type: 'shoot', lane, pierce: overdriven });
   }
+}
+
+function updateWarping(g: Game, input: FrameInput, dt: number): void {
+  g.player.depth = warpDepth(g.modeTime);
+  updatePlayer(g, input, dt);
+  updateShots(g, dt);
+  // A missing thorn has its tip at 1, which this can never match.
+  const { depth } = g.player;
+  if (depth >= g.thorns[playerLane(g)] && depth < 1) killPlayer(g);
+}
+
+function updatePlaying(g: Game, input: FrameInput, dt: number): void {
+  g.levelTime += dt;
+  updatePlayer(g, input, dt);
+  const lane = playerLane(g);
 
   if (g.levelTime >= LEVEL_INTRO) {
     while (g.spawnQueue.length && g.spawnQueue[0].at <= g.levelTime - LEVEL_INTRO) {
@@ -237,6 +268,7 @@ function updateEnemy(g: Game, e: Enemy, dt: number): void {
         return;
       }
       e.depth -= climb;
+      layThorn(g, laneOf(web, e.u), e.depth);
       if (e.drops < SEEDER_MAX_DROPS && e.depth <= SEEDER_DROP_DEPTH) {
         spawnEnemy(g, 'mine', laneOf(web, e.u) + 0.5, e.depth);
         e.drops++;
@@ -258,6 +290,19 @@ function updateEnemy(g: Game, e: Enemy, dt: number): void {
     e.state = 'rim';
     e.u = wrapU(web, e.u);
   }
+}
+
+function layThorn(g: Game, lane: number, depth: number): void {
+  g.thorns[lane] = Math.min(g.thorns[lane], Math.max(depth, THORN_MIN_TIP));
+}
+
+/** Burn a shot's worth off the thorn in a lane, destroying it once nothing is left. */
+function chipThorn(g: Game, lane: number): void {
+  const depth = g.thorns[lane];
+  g.thorns[lane] = Math.min(1, depth + THORN_CHIP);
+  addScore(g, POINTS.thorn);
+  if (g.thorns[lane] < 1) g.events.push({ type: 'hit', u: lane + 0.5, depth });
+  else g.events.push({ type: 'explode', u: lane + 0.5, depth, kind: 'thorn' });
 }
 
 function updateShots(g: Game, dt: number): void {
@@ -295,6 +340,12 @@ function updateShots(g: Game, dt: number): void {
       }
     }
 
+    // Thorns stop ordinary shots; a piercing shot keeps catching the tip and burns through.
+    if (!spent && g.thorns[s.lane] < 1 && s.depth + 0.01 >= g.thorns[s.lane]) {
+      chipThorn(g, s.lane);
+      spent = !s.pierce;
+    }
+
     if (!spent && s.depth <= 1) survivors.push(s);
   }
   g.shots = survivors;
@@ -329,10 +380,10 @@ export function addScore(g: Game, points: number): void {
 }
 
 function killPlayer(g: Game): void {
-  if (g.mode !== 'playing') return;
+  if (g.mode !== 'playing' && g.mode !== 'warping') return;
   setMode(g, 'dying');
   g.overdriveTime = 0;
-  g.events.push({ type: 'playerDeath', lane: playerLane(g) });
+  g.events.push({ type: 'playerDeath', lane: playerLane(g), depth: g.player.depth });
 }
 
 function afterDeath(g: Game): void {
@@ -340,6 +391,11 @@ function afterDeath(g: Game): void {
   if (g.lives <= 0) {
     setMode(g, 'gameover');
     g.events.push({ type: 'gameOver' });
+    return;
+  }
+  // Crashing during the dive: the sector was already cleared, so carry on to the next one.
+  if (g.player.depth > 0) {
+    setupLevel(g, g.level + 1);
     return;
   }
   // Survivors are pushed back to the far end; nearby mines and all bolts are cleared.

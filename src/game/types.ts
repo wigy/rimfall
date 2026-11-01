@@ -43,10 +43,10 @@ export type Mode = 'title' | 'playing' | 'dying' | 'warping' | 'gameover';
 
 export type GameEvent =
   | { type: 'shoot'; lane: number; pierce: boolean }
-  | { type: 'explode'; u: number; depth: number; kind: EnemyKind | 'bolt' }
+  | { type: 'explode'; u: number; depth: number; kind: EnemyKind | 'bolt' | 'thorn' }
   | { type: 'hit'; u: number; depth: number }
   | { type: 'enemyFire'; lane: number; depth: number }
-  | { type: 'playerDeath'; lane: number }
+  | { type: 'playerDeath'; lane: number; depth: number }
   | { type: 'warp' }
   | { type: 'levelStart'; level: number }
   | { type: 'overdrive' }
@@ -66,10 +66,13 @@ export interface Game {
   nextLifeAt: number;
   web: Web;
   speed: number;
-  player: { pos: number; fireCooldown: number };
+  /** depth is 0 on the rim; it only grows during the warp dive and is kept through a crash. */
+  player: { pos: number; depth: number; fireCooldown: number };
   shots: Shot[];
   bolts: Bolt[];
   enemies: Enemy[];
+  /** Per lane, the near tip of the thorn reaching up from the far end. 1 = no thorn. */
+  thorns: number[];
   spawnQueue: SpawnEntry[];
   /** Overdrive meter, 0..1. Full meter can be spent for a burst of piercing rapid fire. */
   overdrive: number;
