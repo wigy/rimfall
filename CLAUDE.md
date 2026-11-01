@@ -18,6 +18,7 @@ npm run typecheck    # tsc only
 npm test             # vitest run (all tests)
 npx vitest run src/game/game.test.ts        # one file
 npx vitest run -t "splits a splitter"       # one test by name
+node scripts/capture-levels.mjs             # regenerate README level images (needs Playwright, ImageMagick)
 ```
 
 ## Architecture
